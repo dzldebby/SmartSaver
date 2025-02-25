@@ -295,6 +295,61 @@ def calculate_bank_interest(deposit_amount, bank_info, bank_requirements):
             total_interest += interest_30k
             add_tier(next_30k, rate_30k, "Next $30,000")
     
+    elif bank_info['bank'] == 'DBS Multiplier':
+        # Step 1: Check salary credit prerequisite
+        if not bank_requirements['has_salary']:
+            # If no salary credit, only base interest applies to entire amount
+            base_rate = 0.0005  # 0.05%
+            total_interest += add_tier(deposit_amount, base_rate, "Base Interest (No Salary Credit)")
+            return {'total_interest': total_interest, 'breakdown': breakdown}
+        
+        # Step 2: Calculate total eligible transactions and category count
+        total_transactions = calculate_dbs_eligible_transactions(bank_requirements)
+        category_count = count_dbs_categories(bank_requirements)
+        
+        # Step 3: Check minimum transaction requirement
+        if total_transactions < 500 or category_count == 0:
+            # If minimum transaction not met or no categories, only base interest applies
+            base_rate = 0.0005  # 0.05%
+            total_interest += add_tier(deposit_amount, base_rate, 
+                "Base Interest (Min Transaction Not Met)")
+            return {'total_interest': total_interest, 'breakdown': breakdown}
+        
+        # Step 4: Determine tier based on category count and transaction amount
+        tier_type = f"cat{category_count}_"
+        if total_transactions >= 30000:
+            tier_type += "high"
+        elif total_transactions >= 15000:
+            tier_type += "mid"
+        else:
+            tier_type += "low"
+        
+        # Step 5: Get the matching tier from bank_info
+        try:
+            tier = next(t for t in bank_info['tiers'] if t['tier_type'] == tier_type)
+            rate = float(str(tier['interest_rate']).strip('%')) / 100
+            cap_amount = float(tier['cap_amount'])
+            
+            # Step 6: Apply bonus interest to eligible amount
+            eligible_amount = min(deposit_amount, cap_amount)
+            if eligible_amount > 0:
+                total_interest += add_tier(eligible_amount, rate, 
+                    f"Bonus Interest (Income + {category_count} categories, ${total_transactions:,.2f} transactions)")
+            
+            # Step 7: Apply base interest to remaining amount above cap
+            if deposit_amount > cap_amount:
+                base_rate = 0.0005  # 0.05%
+                remaining = deposit_amount - cap_amount
+                total_interest += add_tier(remaining, base_rate, 
+                    "Base Interest (Amount Above Cap)")
+                
+        except StopIteration:
+            # Handle case where no matching tier is found
+            st.error(f"No matching interest rate tier found for {tier_type}")
+            base_rate = 0.0005  # 0.05%
+            total_interest += add_tier(deposit_amount, base_rate, 
+                "Base Interest (No Matching Tier)")
+    
     return {
         'total_interest': total_interest,
         'breakdown': breakdown
@@ -689,13 +744,19 @@ def streamlit_app():
                     with st.expander("✅ Basic Requirements", expanded=True):
                         # Salary Credit
                         has_salary = st.toggle(
-                            "Credit Salary of >SGD$3,000 to Bank Account",
-                            help="Select this if your salary of >$3K is credited to your bank account monthly"
+                            "Credit Salary to Bank Account",
+                            help="Select this if your salary is credited to your bank account monthly."
                         )
                         if has_salary:
-                            # assume salary amount >2K
-                            salary_amount = 3001
-                            # st.caption(f"Selected Salary: ${format_number(salary_amount)}")
+                            salary_amount = st.number_input(
+                                "Monthly Salary Amount ($)",
+                                min_value=0,
+                                value=3500,
+                                step=100,
+                                format="%d",
+                                help="You only need to enter the amount if you would like to calculate for DBS Multiplier"
+                            )
+                            st.caption(f"Selected Salary Amount: ${format_number(salary_amount)}")
                         else:
                             salary_amount = 0
                             
@@ -726,23 +787,32 @@ def streamlit_app():
 
                     # Advanced Requirements
                     with st.expander("📈 Advanced Requirements (Optional)", expanded=False):
-                        has_insurance = st.toggle(
-                            "Have Insurance Products",
-                            help="""Select this if you have purchased eligible insurance products from any of the following banks: Standard Chartered, OCBC 360 (min. S$2,000 annual insurance premium), BOC SmartSaver 
-                                """
-                        )
-                        has_investments = st.toggle(
-                            "Have Investments",
-                            help="""Select this if you have any of the following eligible investments products from any of the following banks: Standard Chartered, OCBC 360"""
-                        )
-                        increased_balance = st.toggle(
-                            "[OCBC-Specific] Increased Account Balance",
-                            help="""OCBC 360: Min. S$500 increase from previous month"""
-                        )
-                        grew_wealth = st.toggle(
-                            "[OCBC-Specific] Grew Wealth",
-                            help="""OCBC 360: Maintain an average daily balance of at least S$200,000."""
-                        )
+                        # Insurance with amount
+                        has_insurance = st.toggle("Have Insurance Products",
+                            help="Select this if you have purchased eligible insurance products...")
+                        if has_insurance:
+                            insurance_amount = st.number_input("Monthly Insurance Premium Amount", 
+                                min_value=0.0, value=0.0, step=100.0)
+
+                        # Investment with amount
+                        has_investments = st.toggle("Have Investments",
+                            help="Select this if you have any of the following eligible investments products...")
+                        if has_investments:
+                            investment_amount = st.number_input("Monthly Investment Amount", 
+                                min_value=0.0, value=0.0, step=100.0)
+
+                        # Home Loan with amount
+                        has_home_loan = st.toggle("Have Home Loan")
+                        if has_home_loan:
+                            home_loan_amount = st.number_input("Monthly Home Loan Installment Amount", 
+                                min_value=0.0, value=0.0, step=100.0)
+
+                        # Keep existing OCBC-specific toggles
+                        increased_balance = st.toggle("[OCBC-Specific] Increased Account Balance",
+                            help="OCBC 360: Min. S$500 increase from previous month")
+                        
+                        grew_wealth = st.toggle("[OCBC-Specific] Grew Wealth",
+                            help="OCBC 360: Maintain an average daily balance of at least S$200,000.")
 
                     # Create base requirements dictionary (moved outside tabs)
                     base_requirements = {
@@ -753,7 +823,12 @@ def streamlit_app():
                         'has_insurance': has_insurance,
                         'has_investments': has_investments,
                         'increased_balance': increased_balance,
-                        'grew_wealth': grew_wealth
+                        'grew_wealth': grew_wealth,
+                        'insurance_amount': insurance_amount if has_insurance else 0,
+                        'investment_amount': investment_amount if has_investments else 0,
+                        'has_home_loan': has_home_loan,
+                        'home_loan_amount': home_loan_amount if has_home_loan else 0,
+                        'total_eligible_transactions': 0  # Will be calculated when needed
                     }
 
                     # Show links differently based on device type
@@ -822,7 +897,7 @@ def streamlit_app():
                             with st.spinner("Calculating interest rates..."):
                                 # Calculate and display results for each bank
                                 bank_results = []
-                                for bank_name in ["UOB One", "SC BonusSaver", "OCBC 360", "BOC SmartSaver", "Chocolate"]:
+                                for bank_name in ["UOB One", "SC BonusSaver", "OCBC 360", "BOC SmartSaver", "Chocolate", "DBS Multiplier"]:
                                     bank_reqs = base_requirements.copy()
                                     
                                     # Special handling for UOB One
@@ -949,96 +1024,6 @@ def streamlit_app():
                                                 st.markdown("📝 Calculations look wrong? [Provide feedback →](/Feedback)")
 
 
-                                # # Get product recommendation
-                                # st.write("### 🔍 Product Recommendation Debug")
-                                # st.write("Attempting to get product recommendation...")
-                                
-                                # recommender = ProductRecommender()
-                                # st.write("✓ Created recommender instance")
-                                
-                                # model_loaded = recommender.load_model()
-                                # st.write(f"✓ Model loaded: {model_loaded}")
-                                
-                                # if model_loaded:
-                                #     user_data = prepare_features({
-                                #         'savings_amount': float(investment_amount),
-                                #         'salary_above_3k': float(base_requirements['salary_amount']) >= 3000,
-                                #         'monthly_card_spend': float(base_requirements['spend_amount']),
-                                #         'num_giro_payments': int(base_requirements['giro_count']),
-                                #         'has_insurance': bool(base_requirements['has_insurance']),
-                                #         'has_investments': bool(base_requirements['has_investments']),
-                                #         'increased_balance': bool(base_requirements.get('increased_balance', False)),
-                                #         'high_balance': float(investment_amount) >= 200000
-                                #     })
-                                #     st.write("✓ Prepared user data:", user_data)
-                                    
-                                #     prediction, probabilities, explanations = recommender.predict(user_data)
-                                #     st.write(f"✓ Got prediction: {prediction}")
-                                #     st.write(f"✓ Got probabilities: {probabilities}")
-                                #     st.write(f"✓ Got explanations: {explanations}")
-                                    
-                                #     try:
-                                #         total_records = save_user_data(user_data, prediction)
-                                #         st.write(f"✓ Saved data. Total records: {total_records}")
-                                #         if total_records > 0 and total_records % 5 == 0:
-                                #             st.write("Training initial model...")
-                                #             train_initial_model()
-                                #     except Exception as e:
-                                #         st.error(f"🚨 Unable to save recommendation data: {str(e)}")
-                                #         st.write("Save error details:", str(e))
-                                    
-                                #     st.write("---")
-                                #     st.write("### 🎯 Product Recommendation")
-                                #     st.success(f"Based on your profile, we recommend: **{PRODUCT_MAPPING[prediction]}**")
-                                    
-                                #     with st.expander("View Recommendation Details", expanded=True):
-                                #         # Show confidence scores
-                                #         st.write("#### 📊 Confidence Scores")
-                                #         for product_id, prob in enumerate(probabilities):
-                                #             st.write(f"- {PRODUCT_MAPPING[product_id]}: {prob:.2%}")
-                                        
-                                #         # Show feature importance explanations
-                                #         if explanations:
-                                #             st.write("\n#### 🔍 Key Factors")
-                                #             st.write("These factors influenced our recommendation:")
-                                            
-                                #             for exp in explanations:
-                                #                 feature = exp['feature'].replace('_', ' ').title()
-                                #                 value = exp['value']
-                                #                 importance = exp['importance']
-                                                
-                                #                 # Create a more natural explanation
-                                #                 if feature == 'Savings Amount':
-                                #                     detail = f"Your savings amount of ${value:,.2f}"
-                                #                 elif feature == 'Monthly Card Spend':
-                                #                     detail = f"Your monthly card spend of ${value:,.2f}"
-                                #                 elif feature == 'Num Giro Payments':
-                                #                     detail = f"You have {int(value)} GIRO payments"
-                                #                 elif feature == 'Has Insurance':
-                                #                     detail = "You already have insurance" if value else "You don't have insurance yet"
-                                #                 elif feature == 'Has Investments':
-                                #                     detail = "You have existing investments" if value else "You don't have investments yet"
-                                #                 elif feature == 'Increased Balance':
-                                #                     detail = "Your balance has increased" if value else "Your balance hasn't increased"
-                                #                 elif feature == 'High Balance':
-                                #                     detail = "You have a high balance" if value else "You have a moderate balance"
-                                #                 elif feature == 'Salary Above 3k':
-                                #                     detail = "Your salary is above $3,000" if value else "Your salary is below $3,000"
-                                                
-                                #                 # Show explanation with importance
-                                #                 importance_width = min(100, int(abs(importance) * 100))
-                                #                 st.write(
-                                #                     f"""<div style='display: flex; align-items: center; margin-bottom: 10px;'>
-                                #                         <div style='flex: 1;'>{detail}</div>
-                                #                         <div style='width: 100px; background: #f0f2f6; height: 10px; border-radius: 5px;'>
-                                #                             <div style='width: {importance_width}%; background: #00c853; height: 100%; border-radius: 5px;'></div>
-                                #                         </div>
-                                #                     </div>""",
-                                #                     unsafe_allow_html=True
-                                #                 )
-                                #         else:
-                                #             st.warning("No explanation factors available")
-
                     with tab2:
                         st.write("""
                             **Optimize across multiple banks**
@@ -1158,6 +1143,66 @@ def optimize_spend_allocation(total_spend, banks_data, deposit_amounts, base_req
     try_allocation(total_spend, eligible_banks, {})
     
     return best_allocation, best_total_interest, best_breakdown
+
+def calculate_dbs_eligible_transactions(requirements):
+    """Calculate total eligible transactions for DBS Multiplier"""
+    total = 0
+    
+    # Add salary amount if salary credited
+    if requirements.get('has_salary'):
+        total += requirements.get('salary_amount', 0)
+    
+    # Add card spend if exists
+    total += requirements.get('spend_amount', 0)
+    
+    # Add insurance amount if category selected
+    if requirements.get('has_insurance'):
+        total += requirements.get('insurance_amount', 0)
+        
+    # Add investment amount if category selected
+    if requirements.get('has_investments'):
+        total += requirements.get('investment_amount', 0)
+        
+    # Add home loan amount if category selected
+    if requirements.get('has_home_loan'):
+        total += requirements.get('home_loan_amount', 0)
+        
+    return total
+
+def count_dbs_categories(requirements):
+    """Count number of valid DBS categories"""
+    count = 0
+    # Credit card spend
+    if requirements.get('spend_amount', 0) > 0:
+        count += 1
+    # Insurance
+    if requirements.get('has_insurance') and requirements.get('insurance_amount', 0) > 0:
+        count += 1
+    # Investment
+    if requirements.get('has_investments') and requirements.get('investment_amount', 0) > 0:
+        count += 1
+    # Home loan
+    if requirements.get('has_home_loan') and requirements.get('home_loan_amount', 0) > 0:
+        count += 1
+    return count
+
+def get_dbs_tier(category_count, total_transactions):
+    """
+    Determine the appropriate DBS tier based on category count and transaction amount
+    Returns: tier_type (str)
+    """
+    if total_transactions < 500:
+        return 'base'
+        
+    tier_type = f"cat{category_count}_"
+    if total_transactions >= 30000:
+        tier_type += "high"
+    elif total_transactions >= 15000:
+        tier_type += "mid"
+    else:
+        tier_type += "low"
+    
+    return tier_type
 
 if __name__ == "__main__":
 
