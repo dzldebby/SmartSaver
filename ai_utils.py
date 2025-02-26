@@ -8,8 +8,19 @@ from config import DEFAULT_MODEL, MAX_TOKENS, MAX_REQUESTS_PER_MINUTE
 # Load environment variables
 load_dotenv()
 
-# Initialize OpenAI client
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Check if OpenAI API key is available
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_AVAILABLE = bool(OPENAI_API_KEY)
+
+# Initialize OpenAI client with error handling
+try:
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    if not OPENAI_AVAILABLE:
+        logging.warning("OpenAI API key not found. AI features will be disabled.")
+except Exception as e:
+    logging.error(f"Error initializing OpenAI client: {str(e)}")
+    OPENAI_AVAILABLE = False
+    client = None
 
 # Track API call rate
 api_call_count = 0
@@ -20,6 +31,10 @@ def get_ai_response(messages, model=DEFAULT_MODEL, max_tokens=MAX_TOKENS) -> str
     Get a response from the OpenAI API with exponential backoff for retries
     """
     global api_call_count, last_reset_time
+    
+    # Check if OpenAI is available
+    if not OPENAI_AVAILABLE:
+        return "I'm sorry, the AI assistant is currently unavailable because the OpenAI API key is not configured. Please contact the administrator to set up the API key."
     
     # Reset counter if a minute has passed
     current_time = time.time()
@@ -74,4 +89,4 @@ def test_ai():
     return "AI utils loaded successfully"
 
 # Make sure the function is exported
-__all__ = ['get_ai_response', 'test_ai']
+__all__ = ['get_ai_response', 'test_ai', 'OPENAI_AVAILABLE']
