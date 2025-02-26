@@ -122,3 +122,48 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 - [Streamlit](https://streamlit.io/) for the web app framework
 - [OpenAI](https://openai.com/) for the AI chat capabilities
+
+## Setup Instructions
+
+### Local Development
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/smartsaver.git
+   cd smartsaver
+   ```
+
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. Set up environment variables:
+   - Copy `.env.example` to `.env`
+   - Add your OpenAI API key to the `.env` file
+   ```bash
+   cp .env.example .env
+   # Edit .env with your API key
+   ```
+
+4. Run the app:
+   ```bash
+   streamlit run Calculator.py
+   ```
+
+### Deployment on Streamlit Cloud
+
+1. Push your code to GitHub (make sure `.env` is in `.gitignore`)
+
+2. Deploy on Streamlit Cloud:
+   - Connect your GitHub repository
+   - In the app settings, add your secrets:
+     - Go to "Advanced settings" > "Secrets"
+     - Add `OPENAI_API_KEY` with your API key
+
+## Features
+
+- Calculate interest rates for multiple Singapore banks
+- Compare different account types and requirements
+- Optimize your savings across multiple accounts
+- AI assistant to answer questions about your results
