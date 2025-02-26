@@ -28,6 +28,16 @@ cd SmartSaver
 pip install -r requirements.txt
 ```
 
+3. Set up environment variables:
+   - Copy `.env.example` to `.env`
+   ```bash
+   cp .env.example .env
+   ```
+   - Edit `.env` and add your OpenAI API key
+   ```
+   OPENAI_API_KEY='your_api_key_here'
+   ```
+
 ## 💻 Usage
 
 1. Start the application:
@@ -107,3 +117,8 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 - Developer: Debby
 - GitHub: [@dzldebby](https://github.com/dzldebby)
+
+## Acknowledgements
+
+- [Streamlit](https://streamlit.io/) for the web app framework
+- [OpenAI](https://openai.com/) for the AI chat capabilities

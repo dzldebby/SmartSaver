@@ -15,6 +15,14 @@ from user_agents import parse
 from utils.data_processor import prepare_features, PRODUCT_MAPPING, save_user_data
 from utils.model_handler import ProductRecommender
 from train_initial_model import train_initial_model
+from ai_utils import get_ai_response
+from prompt_templates import generate_suggestions, SYSTEM_PROMPTS
+from sanitization import sanitize_user_input, sanitize_ai_output
+from session_handler import (
+    initialize_chat_session, update_chat_with_calculation,
+    add_user_message, add_assistant_message, get_api_messages
+)
+
 
 def calculate_bank_interest(deposit_amount, bank_info, bank_requirements):
     """Calculate interest based on the bank's tier structure and requirements"""
@@ -875,6 +883,9 @@ def streamlit_app():
                         calculate_clicked = st.button("Calculate Single Bank Interest", type="primary", key="single_bank_calc")
                         if calculate_clicked:
                             st.session_state.show_description = False
+                            st.session_state.has_calculated = True
+                            st.session_state.investment_amount = investment_amount
+                            st.session_state.base_requirements = base_requirements.copy()
                             track_calculation('single_bank', investment_amount, base_requirements)
 
                             if MIXPANEL_ENABLED:
@@ -893,20 +904,24 @@ def streamlit_app():
                             st.markdown(""" - See detailed breakdowns for each bank""", help="Banks included: Chocolate Financial, UOB One, SC BonusSaver, BOC SmartSaver, OCBC 360")
                             st.markdown(""" - Compare base rates and bonus interest""")
 
-                        if calculate_clicked:
+                        if calculate_clicked or st.session_state.get('has_calculated', False):
+                            # Use stored values if they exist, otherwise use current values
+                            calc_investment_amount = st.session_state.get('investment_amount', investment_amount)
+                            calc_base_requirements = st.session_state.get('base_requirements', base_requirements)
+                            
                             with st.spinner("Calculating interest rates..."):
                                 # Calculate and display results for each bank
                                 bank_results = []
                                 for bank_name in ["UOB One", "SC BonusSaver", "OCBC 360", "BOC SmartSaver", "Chocolate", "DBS Multiplier"]:
-                                    bank_reqs = base_requirements.copy()
+                                    bank_reqs = calc_base_requirements.copy()
                                     
                                     # Special handling for UOB One
                                     if bank_name == 'UOB One':
-                                        bank_reqs['has_salary'] = base_requirements.get('has_salary', False)
-                                        bank_reqs['salary_amount'] = base_requirements.get('salary_amount', 0)
+                                        bank_reqs['has_salary'] = calc_base_requirements.get('has_salary', False)
+                                        bank_reqs['salary_amount'] = calc_base_requirements.get('salary_amount', 0)
                                     
                                     results = calculate_bank_interest(
-                                        investment_amount, 
+                                        calc_investment_amount, 
                                         banks_data[bank_name], 
                                         bank_reqs
                                     )
@@ -917,6 +932,9 @@ def streamlit_app():
                                         'breakdown': results['breakdown']
                                     })
                                 
+                                # Store bank_results in session state
+                                st.session_state.bank_results = bank_results
+
                                 # Sort banks by interest rate (highest to lowest)
                                 bank_results.sort(key=lambda x: x['annual_interest'], reverse=True)
                                 
@@ -1023,7 +1041,6 @@ def streamlit_app():
                                             with col2:
                                                 st.markdown("📝 Calculations look wrong? [Provide feedback →](/Feedback)")
 
-
                     with tab2:
                         st.write("""
                             **Optimize across multiple banks**
@@ -1041,6 +1058,90 @@ def streamlit_app():
                                 </span>
                             </div>
                         """, unsafe_allow_html=True)
+
+                # Move the AI chat interface outside of the tabs
+                if st.session_state.get('has_calculated', False):
+                    # Get bank results from session state
+                    bank_results = st.session_state.get('bank_results', [])
+                    
+                    # Add AI chat interface here
+                    st.markdown("---")
+                    st.write("### 💬 Ask AI about your results")
+                    
+                    # Initialize chat session if not already done
+                    initialize_chat_session()
+                    
+                    # Update chat context with calculation results
+                    update_chat_with_calculation(
+                        bank_results,  # Your calculation results
+                        {
+                            "savings_amount": st.session_state.get('investment_amount', investment_amount),
+                            "has_salary": has_salary,
+                            "salary_amount": salary_amount,
+                            "spend_amount": card_spend,
+                            "giro_count": giro_count,
+                            "has_insurance": has_insurance,
+                            "has_investments": has_investments
+                        }
+                    )
+                    
+                    # Generate suggestions based on results
+                    suggestions = generate_suggestions(bank_results)
+                    
+                    # Display chat history first (before any new messages are added)
+                    for message in st.session_state.get('chat_messages', []):
+                        with st.chat_message(message["role"]):
+                            st.markdown(message["content"])
+                    
+                    # Display suggestion chips
+                    st.write("Try asking:")
+                    suggestion_cols = st.columns(len(suggestions))
+                    
+                    # Use a unique key for each button based on suggestion content
+                    for i, suggestion_col in enumerate(suggestion_cols):
+                        suggestion = suggestions[i]
+                        # Create a unique key for each suggestion button
+                        button_key = f"suggestion_{i}_{hash(suggestion)}"
+                        
+                        if suggestion_col.button(suggestion, key=button_key):
+                            # Add user message to session state
+                            add_user_message(suggestion)
+                            
+                            # Display user message
+                            with st.chat_message("user"):
+                                st.markdown(suggestion)
+                            
+                            # Get AI response
+                            with st.chat_message("assistant"):
+                                with st.spinner("Thinking..."):
+                                    messages = get_api_messages()
+                                    response = get_ai_response(messages)
+                                    st.markdown(sanitize_ai_output(response))
+                            
+                            # Add assistant response to session state
+                            add_assistant_message(sanitize_ai_output(response))
+                    
+                    # Chat input - now outside of any container
+                    user_input = st.chat_input("Ask a question about your results...")
+                    
+                    if user_input:
+                        # Add user message to session state
+                        sanitized_input = sanitize_user_input(user_input)
+                        add_user_message(sanitized_input)
+                        
+                        # Display user message
+                        with st.chat_message("user"):
+                            st.markdown(user_input)
+                        
+                        # Get AI response
+                        with st.chat_message("assistant"):
+                            with st.spinner("Thinking..."):
+                                messages = get_api_messages()
+                                response = get_ai_response(messages)
+                                st.markdown(sanitize_ai_output(response))
+                        
+                        # Add assistant response to session state
+                        add_assistant_message(sanitize_ai_output(response))
 
             # This is within col1 already
             except Exception as e:
