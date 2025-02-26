@@ -12,9 +12,6 @@ from analytics import (
 )
 from streamlit_javascript import st_javascript
 from user_agents import parse
-from utils.data_processor import prepare_features, PRODUCT_MAPPING, save_user_data
-from utils.model_handler import ProductRecommender
-from train_initial_model import train_initial_model
 from ai_utils import get_ai_response
 from prompt_templates import generate_suggestions, SYSTEM_PROMPTS
 from sanitization import sanitize_user_input, sanitize_ai_output
